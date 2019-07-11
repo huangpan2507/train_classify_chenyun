@@ -1,0 +1,229 @@
+import torch
+import torchvision
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+import numpy as np
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.autograd import Variable
+from visdom import Visdom
+
+
+transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+# 使用torchvision可以很容易地加载CIFAR10。
+# torchvision 的输出是[0,1]的PILImage 图像，把他转化为标准化范围[-1,1]
+# 则其作用就是先将输入归一化到(0,1)，再使用公式”(x-mean)/std”，
+# 将每个元素分布到(-1,1)
+# ToTensor()将shape为(H, W, C)的nump.ndarray或img转为shape为
+# (C, H, W)的tensor
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+                                        download=True, transform=transform)
+testset = torchvision.datasets.CIFAR10(root='./data', train=False,
+                                       download=True, transform=transform)
+# 在调试代码时，将数据集减小先看看有没有bug
+                                     
+trainset_small, trainset_val = torch.utils.data.random_split(trainset, [400, 49600])
+testset_small, testset_val = torch.utils.data.random_split(testset, [400, 9600])
+
+print('trainset:', len(trainset), 'testset:', len(testset))    # 50000  10000
+print('trainset_small: ', len(trainset_small), 'testset_small: ', len(testset_small)) 
+
+trainloader = torch.utils.data.DataLoader(trainset_small, batch_size=4, shuffle=True)
+testloader = torch.utils.data.DataLoader(testset_small, batch_size=4, shuffle=True)
+
+
+# train_db, val_db = torch.utils.data.random_split(train_db, [500, 10000])
+# print('db1:', len(train_db), 'db2:', len(val_db))
+
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog',
+           'horse', 'ship', 'truck')
+
+# 显示图像的函数，转置 (H, W, C)--->(C, H, W),相当于ToTensor的功能
+
+
+def imshow(img):
+    img = img/2 + 0.5                  # 还原被归一化的数据P45页 pytorcch入门实践
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+# DataLoader 是一个可迭代对象，他将dataset返回的每一条数据样本拼接成一个batch
+# 下行 一个batch返回四张图片
+
+
+dataiter = iter(trainloader)
+images, labels = dataiter.next()
+print('labels', labels, labels.dtype)
+# 显示随机加载的图像
+imshow(torchvision.utils.make_grid(images))
+
+
+# 显示图像标签
+print('随机显示一个batch内容 ' + ' '.join('%5s' % classes[labels[j]] for j in range(4)))
+plt.show()
+
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16*5*5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = self.pool(x)
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = self.pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
+
+# 实例化网络
+net = Net()
+
+# 定义损失函数
+criterion = nn.CrossEntropyLoss()
+optimzer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+
+total_number = 0
+
+# 初始化visdom
+globals_step = 0
+viz = Visdom()
+viz.line([0.], [0.], win='train_loss', opts=dict(title='train loss'))
+viz.line([0.], [0.], win='train_loss_Per_epoch', opts=dict(title='train loss per epoch'))
+viz.line([[0.0, 0.0]], [0.], win='test_loss', opts=dict(title='Test Loss&Acc.',
+                                                        legend=['test_loss', 'acc.']))
+
+# 训练网络,我们只需在数据迭代器上循环，将数据输入给网络，并优化n
+for epoch in range(2):       # 多批次循环
+    running_loss = 0.0
+    running_loss_ = 0.0
+    for i, data in enumerate(trainloader, 0):
+        # 获取输入
+        inputs, labels = data
+        # 转化为 Variable
+        inputs, labels = Variable(inputs), Variable(labels)
+        # 梯度指0
+        optimzer.zero_grad()
+        # 正向传播，反向传播，优化
+        outputs = net(inputs)
+        # print('outputs: ', outputs.size())
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimzer.step()
+
+        # 打印状态信息
+        globals_step += 1
+        running_loss += loss.item()  # 或者running_loss += loss.data[0]
+
+        running_loss_ += loss.item()
+
+        if i % 400 == 399:          # 每2000打印一次
+            print('[%d, %5d] loss: %.3f'
+                  % (epoch+1, i+1, running_loss_ / 2000))  # 每累计2000，累计完后清除
+            # print('labels', labels)
+
+            viz.line([running_loss_ / 2000], [globals_step], win='train_loss', update='append')
+            running_loss_ = 0.0
+
+        total_number += labels.size(0)     # 统计有多少张图片
+    viz.line([running_loss / total_number], [epoch + 1], win='train_loss_Per_epoch', update='append')
+
+# net.named_parameters可同时返回可学习的参数及名称。forward函数的输入和输出都是Tensor
+# 打印训练好的参数
+for name, parameters in net.named_parameters():
+    print(name, ':', parameters.size())
+print('Finished Training')
+
+
+dataiter = iter(testloader)
+images, labels = dataiter.next()
+# print('images:', images, images.size())       # torch.Size([4, 3,H, W])
+# print('labels:', labels, labels.size())       # torch.Size([4])
+
+# 显示测试集中的图片，并显示测试集中图片对应的标签
+imshow(torchvision.utils.make_grid(images))
+print('GroundTruth: ', ' '.join('%5s' % classes[labels[j]] for j in range(4)))
+
+# 将一个batch数据喂入经过训练后的网络，看其认为是什么
+outputs = net(images)
+images_, predicted = torch.max(outputs, 1)
+# print('outputs:', outputs, outputs.size())         # torch.Size([4, 10])
+# print('images_: ', images_, images_.size())        # torch.Size([4]), 四个数值
+print('Predicted: ', ' '.join('%5s' % classes[predicted[j]] for j in range(4)))
+plt.show()
+
+
+# 接下来看看网络在整个测试集上的结果如何
+correct = 0                  # 预测正确的图片数
+total = 0                    # 总共的图片数
+j = 0
+test_loss = 0.
+with torch.no_grad():
+
+    for data in testloader:
+        images, labels = data
+        outputs = net(images)
+        test_loss += criterion(outputs, labels).item()
+        j += 1
+# print('outputs', outputs)
+        _, predicted = torch.max(outputs, 1)
+        print('predicted：', predicted)
+        print('labels：', labels)
+#        print('labels.size(0)：', labels.size(0))
+        total += labels.size(0)      # 该batch下的大小 ，for循环一下就是所有图片
+        correct += (predicted == labels).sum().item()    # 其为标量，不用.item()也可以
+        if j % 400 == 399:
+            viz.line([[test_loss / 500, 100 * correct / len(testloader.dataset)]], [j],
+                     win='test_loss', update='append')
+print('total test image_number: ', total)
+print('Accuracy of the network on the 10000 test images:' ' %d %%' % (100 * correct / total))
+
+# 在识别哪一类好，哪一类不好了？
+class_correct = list(0. for i in range(10))
+class_total = list(0. for i in range(10))
+with torch.no_grad():
+    for data in testloader:
+        images, labels = data
+        outputs = net(images)
+        _, predicted = torch.max(outputs, 1)
+        c = (predicted == labels).squeeze()
+        print('squeeze after c: ', c, c.shape)
+        for i in range(4):
+
+            # labels tensor([7, 2, 3, 9]) torch.Size([4])
+            print('labels, labels.size, label.item', labels, labels.size(), label.item())
+
+            label = labels[i]                        # 一个batch中第1张所代表的label为7（对应为dog）
+            # print('i, label, label.item: ', i, label, label.item())
+            print('class_correct[{}]:{}, c[{}]: {}'.format(label, class_correct[label], i, c[i].item()))
+
+            '''
+            如下错了， 在于{}中间不能有空格
+            print('class_correct[{}]: { }, c{} : {}'.format(label, class_correct[label], i, c[i].item()))
+           '''
+            class_correct[label] += c[i].item()       # 因为每个类都要统计准确率，所以有class_correct[label]
+            print('class_correct[{}]: {}'.format(label, class_correct[label]))
+            #  print('class_total[{}]: {}'.format(label, class_total[label]))
+            class_total[label] += 1                   # 统计每一类的个数
+
+for i in range(10):
+    print('Accuracy of %5s : %2d %%' % (classes[i], 100 * class_correct[i]
+                                        / class_total[i]))
+
+
+
+if __name__ == 'main':
+    print('')
