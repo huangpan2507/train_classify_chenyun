@@ -1,0 +1,2 @@
+# train_classify_chenyun
+在陈云 P45页加上其github 。主要是训练网络，然后喂入训练好的数据，看网络认为属于什么标签；统计训练和测试阶段的loss以及准去率曲线visdom；将数据集进一步分小块，另外参见https://github.com/Bjarten/early-stopping-pytorch/blob/master/MNIST_Early_Stopping_example.ipynb；最后将每个类的准确率统计出来。1. 关于在用visdom时， opts=dict(title='Test Loss&amp;Acc.', legend=['test_loss', 'acc.']中的legend拼写错误，一直没检查出来。 2. 关于使用print（‘xx {}’。format（xx））时，‘{ }’大括号中不能有空格。 3.由于这类数据很大，所以我先将数据集分成更小的数量，检查代码有什么bug，没有bug后再跑整个数据集，这样更快！ 4.关于统计每一类预测的准确率还需要在看看，没完全掌握。 5.这是在陈云github上加了visdom曲线，这样更形象
